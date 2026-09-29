@@ -35,6 +35,15 @@ func handleTcp(conn net.Conn) {
 	requestMsg := strings.Split(currMsg, " ")
 	if len(requestMsg) != 3 {
 		fmt.Printf("Error: Header length not 3\n")
+		fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
+		return
+	} else if requestMsg[0] != "GET" && requestMsg[0] != "POST" && requestMsg[0] != "DELETE" {
+		fmt.Printf("Error: Unknown method\n")
+		fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
+		return
+	} else if len(requestMsg[1]) <= 0 {
+		fmt.Printf("Error: Path too short\n")
+		fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
 		return
 	}
 
@@ -66,8 +75,14 @@ func handleTcp(conn net.Conn) {
 	for _, el := range headerMsg {
 		ns := strings.Trim(el, "\r\n")
 		fmt.Printf("%q\n", ns)
-		temp := strings.SplitN(ns, ": ", 2)
+		temp := strings.Split(ns, ": ")
+		if len(temp) != 2 {
+			fmt.Printf("Error: Invalid header\n")
+			fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
+			return
+		}
 		req.headers[temp[0]] = temp[1]
+		fmt.Printf("%s: %s\n", temp[0], temp[1])
 	}
 
 	switch req.method {
