@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Request struct {
@@ -16,6 +17,34 @@ type Request struct {
 	version string
 	headers map[string]string
 	body    string
+}
+
+type Status int
+
+const (
+	BadRequest Status = iota
+	NotFound
+	OK
+	MethodNotAllowed
+)
+
+func writeResponse(conn net.Conn, body string, status Status) {
+
+	statusText := ""
+	switch status {
+	case OK:
+		statusText = "200 OK"
+	case BadRequest:
+		statusText = "400 Bad Request"
+		body = "Bad Request"
+	case NotFound:
+		statusText = "404 Not Found"
+		body = "Not Found"
+	case MethodNotAllowed:
+		statusText = "405 Method Not Allowed"
+		body = "Method Not Allowed"
+	}
+	fmt.Fprintf(conn, "HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%s", statusText, len(body), body)
 }
 
 func handleTcp(conn net.Conn) {
@@ -35,15 +64,11 @@ func handleTcp(conn net.Conn) {
 	requestMsg := strings.Split(currMsg, " ")
 	if len(requestMsg) != 3 {
 		fmt.Printf("Error: Header length not 3\n")
-		fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
-		return
-	} else if requestMsg[0] != "GET" && requestMsg[0] != "POST" && requestMsg[0] != "DELETE" {
-		fmt.Printf("Error: Unknown method\n")
-		fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
+		writeResponse(conn, "", BadRequest)
 		return
 	} else if len(requestMsg[1]) <= 0 {
 		fmt.Printf("Error: Path too short\n")
-		fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
+		writeResponse(conn, "", BadRequest)
 		return
 	}
 
@@ -78,62 +103,77 @@ func handleTcp(conn net.Conn) {
 		temp := strings.Split(ns, ": ")
 		if len(temp) != 2 {
 			fmt.Printf("Error: Invalid header\n")
-			fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
+			writeResponse(conn, "", BadRequest)
 			return
 		}
 		req.headers[temp[0]] = temp[1]
 		fmt.Printf("%s: %s\n", temp[0], temp[1])
 	}
 
+	// check if host exist needed for http
+	_, ok := req.headers["Host"]
+	if !ok {
+		fmt.Printf("Error: Host not exist in header\n")
+		writeResponse(conn, "", BadRequest)
+		return
+	}
+
 	switch req.method {
 	case "GET":
 		text := ""
-		status := ""
+		status := OK
 
 		switch req.path {
 		case "/":
 			text = "Welcome!"
-			status = "200 OK"
+			status = OK
 		case "/hello":
 			text = "Hello!"
-			status = "200 OK"
+			status = OK
 		case "/about":
 			text = "About this server"
-			status = "200 OK"
+			status = OK
 		default:
 			text = "Not Found"
-			status = "404 Not Found"
+			status = NotFound
 		}
-		fmt.Fprintf(conn, "HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%s", status, len(text), text)
+		writeResponse(conn, text, status)
 	case "POST":
 		bodyLen, ok := req.headers["Content-Length"]
 		if ok {
 			temp, err := strconv.Atoi(bodyLen)
 			if err != nil {
 				fmt.Printf("Error: %s\n", err.Error())
-				fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
+				writeResponse(conn, "", BadRequest)
+				return
+			} else if temp <= 0 {
+				fmt.Printf("Error: Body too short\n")
+				writeResponse(conn, "", BadRequest)
+				return
+			} else if temp > 10000 {
+				fmt.Printf("Error: Body too long\n")
+				writeResponse(conn, "", BadRequest)
 				return
 			}
 			if req.path == "/echo" {
 				contentInput := make([]byte, temp)
 				n, err := io.ReadFull(reader, contentInput)
 				if err != nil {
-					fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
 					fmt.Printf("Error: %s\n", err.Error())
+					writeResponse(conn, "", BadRequest)
 					return
 				}
 				req.body = string(contentInput)
 				fmt.Printf("Len: %v, %s\n", n, req.body)
-				fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%s", len(req.body), req.body)
-
+				writeResponse(conn, req.body, OK)
 			} else {
-				fmt.Fprintf(conn, "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot Found")
+				writeResponse(conn, "", NotFound)
 			}
 		} else {
-			fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nBad Request")
+			writeResponse(conn, "", BadRequest)
 		}
 	default:
-		fmt.Fprintf(conn, "HTTP/1.1 405 Method Not Allowed\r\nContent-Type: text/plain\r\n\r\nNot Allowed")
+		writeResponse(conn, "", MethodNotAllowed)
 	}
 }
 
@@ -145,6 +185,7 @@ func main() {
 	}
 	for {
 		conn, err := ln.Accept()
+		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 		if err != nil {
 			panic(err)
 		}
