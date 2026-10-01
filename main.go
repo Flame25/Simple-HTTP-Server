@@ -47,49 +47,69 @@ func writeResponse(conn net.Conn, body string, status Status) {
 	fmt.Fprintf(conn, "HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%s", statusText, len(body), body)
 }
 
-func handleTcp(conn net.Conn) {
-	fmt.Printf("Connected: %s\n", conn.RemoteAddr())
-	defer conn.Close()
-	reader := bufio.NewReader(conn)
+func readRequest(reader *bufio.Reader) (Request, error) {
+
 	currMsg, err := reader.ReadString('\n')
 	if err != nil {
 		log.Println(err)
-		return
+		return Request{}, err
 	}
 
-	var msg strings.Builder
-	req := Request{
-		headers: make(map[string]string),
-	}
 	requestMsg := strings.Split(currMsg, " ")
 	if len(requestMsg) != 3 {
 		fmt.Printf("Error: Header length not 3\n")
-		writeResponse(conn, "", BadRequest)
-		return
+		return Request{}, fmt.Errorf("Invalid Request Line")
 	} else if len(requestMsg[1]) <= 0 {
 		fmt.Printf("Error: Path too short\n")
-		writeResponse(conn, "", BadRequest)
-		return
+		return Request{}, fmt.Errorf("Invalid Path Line")
 	}
 
-	req.version = strings.Trim(requestMsg[2], "\r\n")
-	req.method = requestMsg[0]
-	req.path = requestMsg[1]
+	req := Request{
+		version: strings.Trim(requestMsg[2], "\r\n"),
+		method:  requestMsg[0],
+		path:    requestMsg[1]}
 	fmt.Printf("%q, %q, %q\n", req.method, req.path, req.version)
+
+	return req, nil
+}
+
+func readBody(reader *bufio.Reader, num int) (string, error) {
+	contentInput := make([]byte, num)
+	n, err := io.ReadFull(reader, contentInput)
+
+	if err != nil {
+		fmt.Printf("Error: %s\n", err)
+		return "", err
+	}
+	b := string(contentInput)
+	fmt.Printf("Len: %v, %s\n", n, b)
+	return b, nil
+}
+
+func readHeader(reader *bufio.Reader) (map[string]string, error) {
+
+	headers := make(map[string]string)
+	var msg strings.Builder
+
 	headerMsg := []string{}
+
+	var err error
+	currMsg := ""
+
 	for currMsg != "\r\n" {
-		msg.WriteString(currMsg)
 		currMsg, err = reader.ReadString('\n')
+		msg.WriteString(currMsg)
+		fmt.Printf("Read header: %q\n", currMsg)
 		if currMsg != "\r\n" {
 			headerMsg = append(headerMsg, currMsg)
 		}
 
 		if err != nil && err != io.EOF {
-			panic(err)
+			return headers, err
 		}
 
 		if err == io.EOF {
-			return
+			return headers, err
 		}
 	}
 
@@ -103,77 +123,123 @@ func handleTcp(conn net.Conn) {
 		temp := strings.Split(ns, ": ")
 		if len(temp) != 2 {
 			fmt.Printf("Error: Invalid header\n")
-			writeResponse(conn, "", BadRequest)
-			return
+			return headers, fmt.Errorf("Invalid Header")
 		}
-		req.headers[temp[0]] = temp[1]
+		headers[temp[0]] = temp[1]
 		fmt.Printf("%s: %s\n", temp[0], temp[1])
 	}
 
 	// check if host exist needed for http
-	_, ok := req.headers["Host"]
+	_, ok := headers["Host"]
 	if !ok {
 		fmt.Printf("Error: Host not exist in header\n")
-		writeResponse(conn, "", BadRequest)
-		return
+		return headers, fmt.Errorf("Host Invalid")
 	}
 
-	switch req.method {
-	case "GET":
-		text := ""
-		status := OK
+	return headers, nil
+}
 
-		switch req.path {
-		case "/":
-			text = "Welcome!"
-			status = OK
-		case "/hello":
-			text = "Hello!"
-			status = OK
-		case "/about":
-			text = "About this server"
-			status = OK
-		default:
-			text = "Not Found"
-			status = NotFound
+func handleTcp(conn net.Conn) {
+	fmt.Printf("Connected: %s\n", conn.RemoteAddr())
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+
+	for {
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		req, err := readRequest(reader)
+
+		if err == io.EOF {
+			return
 		}
-		writeResponse(conn, text, status)
-	case "POST":
-		bodyLen, ok := req.headers["Content-Length"]
-		if ok {
-			temp, err := strconv.Atoi(bodyLen)
-			if err != nil {
-				fmt.Printf("Error: %s\n", err.Error())
-				writeResponse(conn, "", BadRequest)
-				return
-			} else if temp <= 0 {
-				fmt.Printf("Error: Body too short\n")
-				writeResponse(conn, "", BadRequest)
-				return
-			} else if temp > 10000 {
-				fmt.Printf("Error: Body too long\n")
-				writeResponse(conn, "", BadRequest)
-				return
+
+		if err != nil {
+			log.Printf("Error: %s\n", err)
+			writeResponse(conn, "", BadRequest)
+			return
+		}
+
+		req.headers, err = readHeader(reader)
+
+		if err == io.EOF {
+			return
+		}
+
+		if err != nil {
+			log.Printf("Error: %s\n", err)
+			writeResponse(conn, "", BadRequest)
+			return
+		}
+
+		switch req.method {
+		case "GET":
+			text := ""
+			status := OK
+
+			switch req.path {
+			case "/":
+				text = "Welcome!"
+				status = OK
+			case "/hello":
+				text = "Hello!"
+				status = OK
+			case "/about":
+				text = "About this server"
+				status = OK
+			default:
+				text = "Not Found"
+				status = NotFound
 			}
-			if req.path == "/echo" {
-				contentInput := make([]byte, temp)
-				n, err := io.ReadFull(reader, contentInput)
+			writeResponse(conn, text, status)
+		case "POST":
+			bodyLen, ok := req.headers["Content-Length"]
+			if ok {
+				temp, err := strconv.Atoi(bodyLen)
 				if err != nil {
 					fmt.Printf("Error: %s\n", err.Error())
 					writeResponse(conn, "", BadRequest)
 					return
+				} else if temp <= 0 {
+					fmt.Printf("Error: Body too short\n")
+					writeResponse(conn, "", BadRequest)
+					return
+				} else if temp > 10000 {
+					fmt.Printf("Error: Body too long\n")
+					writeResponse(conn, "", BadRequest)
+					return
 				}
-				req.body = string(contentInput)
-				fmt.Printf("Len: %v, %s\n", n, req.body)
-				writeResponse(conn, req.body, OK)
+
+				conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+				req.body, err = readBody(reader, temp)
+
+				if err == io.EOF {
+					return
+				}
+
+				if err != nil {
+					fmt.Printf("Error: %s\n", err)
+					writeResponse(conn, "", BadRequest)
+					return
+				}
+
+				if req.path == "/echo" {
+					writeResponse(conn, req.body, OK)
+				} else {
+					writeResponse(conn, "", NotFound)
+				}
 			} else {
-				writeResponse(conn, "", NotFound)
+				writeResponse(conn, "", BadRequest)
 			}
-		} else {
-			writeResponse(conn, "", BadRequest)
+		default:
+			writeResponse(conn, "", MethodNotAllowed)
 		}
-	default:
-		writeResponse(conn, "", MethodNotAllowed)
+
+		// check header for connection close
+		conClose, ok := req.headers["Connection"]
+		if ok {
+			if conClose == "close" {
+				return
+			}
+		}
 	}
 }
 
@@ -185,11 +251,9 @@ func main() {
 	}
 	for {
 		conn, err := ln.Accept()
-		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 		if err != nil {
 			panic(err)
 		}
-
 		go handleTcp(conn)
 	}
 }
