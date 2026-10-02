@@ -99,7 +99,7 @@ func readHeader(reader *bufio.Reader) (map[string]string, error) {
 	for currMsg != "\r\n" {
 		currMsg, err = reader.ReadString('\n')
 		msg.WriteString(currMsg)
-		fmt.Printf("Read header: %q\n", currMsg)
+		fmt.Printf("%q\n", currMsg)
 		if currMsg != "\r\n" {
 			headerMsg = append(headerMsg, currMsg)
 		}
