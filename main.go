@@ -28,7 +28,7 @@ const (
 	MethodNotAllowed
 )
 
-func writeResponse(conn net.Conn, body string, status Status) {
+func writeResponse(conn net.Conn, body string, status Status, contentType string) {
 
 	statusText := ""
 	switch status {
@@ -44,7 +44,7 @@ func writeResponse(conn net.Conn, body string, status Status) {
 		statusText = "405 Method Not Allowed"
 		body = "Method Not Allowed"
 	}
-	fmt.Fprintf(conn, "HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%s", statusText, len(body), body)
+	fmt.Fprintf(conn, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %v\r\n\r\n%s", statusText, contentType, len(body), body)
 }
 
 func readRequest(reader *bufio.Reader) (Request, error) {
@@ -154,7 +154,7 @@ func handleTcp(conn net.Conn) {
 
 		if err != nil {
 			log.Printf("Error: %s\n", err)
-			writeResponse(conn, "", BadRequest)
+			writeResponse(conn, "", BadRequest, "text/plain")
 			return
 		}
 
@@ -166,7 +166,7 @@ func handleTcp(conn net.Conn) {
 
 		if err != nil {
 			log.Printf("Error: %s\n", err)
-			writeResponse(conn, "", BadRequest)
+			writeResponse(conn, "", BadRequest, "text/plain")
 			return
 		}
 
@@ -177,7 +177,16 @@ func handleTcp(conn net.Conn) {
 
 			switch req.path {
 			case "/":
-				text = "Welcome!"
+				text = `<!DOCTYPE html>
+<html>
+<head>
+    <title>Go HTTP Server</title>
+</head>
+<body>
+    <h1>Hello from my Go server!</h1>
+    <p>This page is served by my HTTP server.</p>
+</body>
+</html>`
 				status = OK
 			case "/hello":
 				text = "Hello!"
@@ -189,22 +198,22 @@ func handleTcp(conn net.Conn) {
 				text = "Not Found"
 				status = NotFound
 			}
-			writeResponse(conn, text, status)
+			writeResponse(conn, text, status, "text/html")
 		case "POST":
 			bodyLen, ok := req.headers["Content-Length"]
 			if ok {
 				temp, err := strconv.Atoi(bodyLen)
 				if err != nil {
 					fmt.Printf("Error: %s\n", err.Error())
-					writeResponse(conn, "", BadRequest)
+					writeResponse(conn, "", BadRequest, "text/plain")
 					return
 				} else if temp <= 0 {
 					fmt.Printf("Error: Body too short\n")
-					writeResponse(conn, "", BadRequest)
+					writeResponse(conn, "", BadRequest, "text/plain")
 					return
 				} else if temp > 10000 {
 					fmt.Printf("Error: Body too long\n")
-					writeResponse(conn, "", BadRequest)
+					writeResponse(conn, "", BadRequest, "text/plain")
 					return
 				}
 
@@ -217,20 +226,20 @@ func handleTcp(conn net.Conn) {
 
 				if err != nil {
 					fmt.Printf("Error: %s\n", err)
-					writeResponse(conn, "", BadRequest)
+					writeResponse(conn, "", BadRequest, "text/plain")
 					return
 				}
 
 				if req.path == "/echo" {
-					writeResponse(conn, req.body, OK)
+					writeResponse(conn, req.body, OK, "text/plain")
 				} else {
-					writeResponse(conn, "", NotFound)
+					writeResponse(conn, "", NotFound, "text/plain")
 				}
 			} else {
-				writeResponse(conn, "", BadRequest)
+				writeResponse(conn, "", BadRequest, "text/plain")
 			}
 		default:
-			writeResponse(conn, "", MethodNotAllowed)
+			writeResponse(conn, "", MethodNotAllowed, "text/plain")
 		}
 
 		// check header for connection close
