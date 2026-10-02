@@ -188,11 +188,17 @@ func handleTcp(conn net.Conn) {
 </body>
 </html>`
 				status = OK
-			case "/hello":
-				text = "Hello!"
-				status = OK
 			case "/about":
-				text = "About this server"
+				text = `<!DOCTYPE html>
+<html>
+<head>
+    <title>Go HTTP Server</title>
+</head>
+<body>
+    <h1>About</h1>
+    <p>Another page for about.</p>
+</body>
+</html>`
 				status = OK
 			default:
 				text = "Not Found"
